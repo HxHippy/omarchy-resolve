@@ -98,6 +98,55 @@ dumps periodically rather than calling it per install.
 Version fields in the route table are advisory. The backend is the authority
 on what actually gets installed; the table only uses them to rank freshness.
 
+## One native manager per root
+
+The obvious objection to a router like this is that you end up merging package
+managers: dnf's `somelib.so` and pacman's `somelib.so` in one LD path, symlinked
+dependency trees, a worse Nix.
+
+The model refuses that outright. Routes are scoped to the platform the backend
+is native to, so `dnf` is never offered on Omarchy:
+
+```
+omarchy   -> opr, pacman, flatpak, source
+fedora    -> dnf, flatpak, source
+debian    -> apt, flatpak, source
+alpine    -> apk, flatpak, source
+macos     -> flatpak, brew, source
+```
+
+One native manager per root. Anything else has to own a separate store, which
+is why flatpak and brew appear alongside a native manager and `apt` never does.
+Nothing merges trees, because merging trees is the part that goes wrong.
+
+The cost is real: something packaged only for Debian does not become installable
+on Arch. The router picks the best existing path, it does not create one.
+
+## The state store is a hint, not a database
+
+It records one thing per install: what was asked for, and which backend answered.
+
+It deliberately does not mirror the transitive dependencies a backend pulled in.
+dnf already knows what it installed; a second copy of that only drifts. If a user
+removes something out of band with `dnf remove`, the entry goes stale and is
+dropped the next time it is consulted. **The backend is always the source of
+truth. State only remembers who to ask.**
+
+## Threat model
+
+The resolver is a trusted component. It tells the client which packages to
+install, and the client hands those to a privileged package manager. A
+compromised or spoofed resolver can therefore name any package on the system.
+
+The prototype does nothing about this. It speaks plain HTTP, has no
+authentication, and the client pins nothing. A real deployment needs signed
+route responses and a pinned resolver identity, in the same way a package
+repository needs a signing key. Do not expose this one to a network you do not
+control.
+
+Package names from the resolver are passed to plugins as arguments after `--`,
+so they cannot become flags. That is the extent of the current hardening.
+
 ## Status
 
 Prototype. Working: resolution, platform and variant matching, trust ordering,
