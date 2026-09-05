@@ -1,0 +1,101 @@
+{
+  "name": "wireshark",
+  "summary": "Network protocol analyzer",
+  "homepage": "https://www.wireshark.org/",
+  "routes": [
+    {
+      "backend": "pacman",
+      "packages": ["wireshark-qt"],
+      "trust": "distro",
+      "os": ["omarchy", "arch"],
+      "arch": ["x86_64"],
+      "version": "4.7.3",
+      "freshness": "devel",
+      "origin": "repology:arch",
+      "note": "Arch splits this package. There is no plain 'wireshark' to install."
+    },
+    {
+      "backend": "pacman",
+      "packages": ["wireshark-cli"],
+      "trust": "distro",
+      "os": ["omarchy", "arch"],
+      "arch": ["x86_64"],
+      "version": "4.7.3",
+      "freshness": "devel",
+      "origin": "repology:arch",
+      "variant": "cli",
+      "note": "Headless variant. Chosen when the request asks for no GUI."
+    },
+    {
+      "backend": "flatpak",
+      "packages": ["org.wireshark.Wireshark"],
+      "trust": "flathub",
+      "os": ["any"],
+      "arch": ["x86_64", "aarch64"],
+      "freshness": "unknown",
+      "origin": "curated",
+      "note": "Repology does not index Flathub, so this entry is maintained by hand."
+    },
+    {
+      "backend": "apt",
+      "packages": ["wireshark"],
+      "trust": "distro",
+      "os": ["debian", "ubuntu"],
+      "arch": ["x86_64", "aarch64"],
+      "version": "4.6.6",
+      "freshness": "outdated",
+      "origin": "repology:debian_unstable"
+    },
+    {
+      "backend": "dnf",
+      "packages": ["wireshark"],
+      "trust": "distro",
+      "os": ["fedora"],
+      "arch": ["x86_64", "aarch64"],
+      "version": "4.6.8",
+      "freshness": "newest",
+      "origin": "repology:fedora_43"
+    },
+    {
+      "backend": "apk",
+      "packages": ["wireshark"],
+      "trust": "distro",
+      "os": ["alpine"],
+      "arch": ["x86_64", "aarch64"],
+      "version": "4.6.8",
+      "freshness": "newest",
+      "origin": "repology:alpine_edge"
+    },
+    {
+      "backend": "brew",
+      "packages": ["wireshark"],
+      "trust": "upstream",
+      "os": ["macos", "linux"],
+      "arch": ["x86_64", "aarch64"],
+      "version": "4.6.8",
+      "freshness": "newest",
+      "origin": "repology:homebrew"
+    },
+    {
+      "backend": "winget",
+      "packages": ["WiresharkFoundation.Wireshark"],
+      "trust": "upstream",
+      "os": ["windows"],
+      "arch": ["x86_64"],
+      "freshness": "unknown",
+      "origin": "curated",
+      "note": "Repology does not index winget either."
+    },
+    {
+      "backend": "source",
+      "packages": ["https://www.wireshark.org/download/src/wireshark-4.6.8.tar.xz"],
+      "trust": "unverified",
+      "os": ["any"],
+      "arch": ["any"],
+      "version": "4.6.8",
+      "freshness": "newest",
+      "origin": "curated",
+      "note": "Last resort. Nobody has reviewed what this builds into."
+    }
+  ]
+}

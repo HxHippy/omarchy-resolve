@@ -1,0 +1,197 @@
+#!/bin/bash
+
+# omarchy install <thing>
+#
+# Asks the resolver what the known ways to get something are, then runs the
+# first one this machine can actually execute. The server decides what is
+# possible; this decides what is available here and does the work.
+#
+# Nothing is installed without --apply. A prototype that installs software the
+# first time you run it to see what it does is a bad prototype.
+
+set -euo pipefail
+
+RESOLVER="${OMARCHY_RESOLVER:-http://127.0.0.1:8080}"
+PLUGIN_DIR="${OMARCHY_PLUGIN_DIR:-$(realpath "${BASH_SOURCE[0]%/*}")/plugins}"
+STATE_FILE="${OMARCHY_STATE:-$HOME/.local/state/omarchy/installed.json}"
+
+APPLY=false
+VARIANT=""
+FORCE_BACKEND=""
+NAME=""
+
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+
+usage() {
+  cat <<'EOF'
+Usage: omarchy-install [options] <name>
+
+Options:
+  --apply             Actually install. Without this, prints the plan only.
+  --variant NAME      Ask for a variant, e.g. cli
+  --backend NAME      Force one backend instead of taking the best available
+  --resolver URL      Resolver base URL (default: $OMARCHY_RESOLVER)
+  -h, --help          Show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+  --apply) APPLY=true; shift ;;
+  --variant) VARIANT="$2"; shift 2 ;;
+  --backend) FORCE_BACKEND="$2"; shift 2 ;;
+  --resolver) RESOLVER="$2"; shift 2 ;;
+  -h | --help) usage; exit 0 ;;
+  -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  *) NAME="$1"; shift ;;
+  esac
+done
+
+[[ -z "$NAME" ]] && { usage; exit 1; }
+
+# What are we? The os id decides which routes even apply, so an Omarchy box
+# has to identify as omarchy and not merely as arch, or it never sees the
+# routes we host ourselves.
+detect_os() {
+  if [[ -d /usr/share/omarchy ]] || command -v omarchy >/dev/null 2>&1; then
+    echo omarchy
+    return
+  fi
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    (. /etc/os-release && echo "${ID:-unknown}")
+    return
+  fi
+  case "$(uname -s)" in
+  Darwin) echo macos ;;
+  *) echo unknown ;;
+  esac
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+  x86_64 | amd64) echo x86_64 ;;
+  aarch64 | arm64) echo aarch64 ;;
+  *) uname -m ;;
+  esac
+}
+
+OS=$(detect_os)
+ARCH=$(detect_arch)
+
+url="$RESOLVER/resolve?name=$(printf %s "$NAME" | jq -sRr @uri)&os=$OS&arch=$ARCH"
+[[ -n "$VARIANT" ]] && url+="&variant=$VARIANT"
+
+echo "${BOLD}omarchy install $NAME${NC}"
+echo "${DIM}machine: $OS/$ARCH   resolver: $RESOLVER${NC}"
+echo ""
+
+response=$(curl -fsS "$url" 2>/dev/null) || {
+  echo "${RED}✗${NC} resolver unreachable at $RESOLVER" >&2
+  exit 1
+}
+
+if [[ "$(jq -r '.found' <<<"$response")" != "true" ]]; then
+  echo "${RED}✗${NC} no routes known for '$NAME'" >&2
+  exit 1
+fi
+
+count=$(jq '.routes | length' <<<"$response")
+if [[ "$count" -eq 0 ]]; then
+  echo "${RED}✗${NC} '$NAME' exists but has no route for $OS/$ARCH" >&2
+  exit 1
+fi
+
+echo "${BOLD}Known paths, best first:${NC}"
+
+chosen=""
+chosen_index=""
+
+for i in $(seq 0 $((count - 1))); do
+  route=$(jq -c ".routes[$i]" <<<"$response")
+  backend=$(jq -r '.backend' <<<"$route")
+  trust=$(jq -r '.trust' <<<"$route")
+  packages=$(jq -r '.packages | join(" ")' <<<"$route")
+  plugin="$PLUGIN_DIR/$backend"
+
+  status="${DIM}no plugin${NC}"
+  usable=false
+
+  if [[ -x "$plugin" ]]; then
+    if "$plugin" probe >/dev/null 2>&1; then
+      usable=true
+      status="${GREEN}available${NC}"
+    else
+      status="${DIM}not usable here${NC}"
+    fi
+  fi
+
+  if [[ -n "$FORCE_BACKEND" && "$backend" != "$FORCE_BACKEND" ]]; then
+    usable=false
+    status="${DIM}skipped (--backend $FORCE_BACKEND)${NC}"
+  fi
+
+  marker="  "
+  if [[ "$usable" == true && -z "$chosen" ]]; then
+    chosen="$route"
+    chosen_index="$i"
+    marker="${GREEN}▶${NC} "
+  fi
+
+  # A source route's "package" is a URL and will happily eat the whole line.
+  if [[ ${#packages} -gt 34 ]]; then
+    packages="${packages:0:31}..."
+  fi
+
+  printf '%s%-9s %-34s %-13s %b\n' \
+    "$marker" "$backend" "$packages" "$trust" "$status"
+done
+
+echo ""
+
+if [[ -z "$chosen" ]]; then
+  echo "${RED}✗${NC} nothing on this machine can execute any known route" >&2
+  exit 1
+fi
+
+backend=$(jq -r '.backend' <<<"$chosen")
+trust=$(jq -r '.trust' <<<"$chosen")
+mapfile -t packages < <(jq -r '.packages[]' <<<"$chosen")
+note=$(jq -r '.note // empty' <<<"$chosen")
+
+echo "${BOLD}Plan:${NC} $backend → ${packages[*]}"
+case "$trust" in
+built-here)
+  echo "${GREEN}✓${NC} We built and signed this. Problems with it are ours." ;;
+distro)
+  echo "${BLUE}i${NC} Packaged by the distribution. Problems go to them." ;;
+*)
+  echo "${YELLOW}⚠${NC} Trust tier '$trust'. Not built or reviewed here; problems go upstream." ;;
+esac
+[[ -n "$note" ]] && echo "${DIM}  $note${NC}"
+
+if [[ "$APPLY" != true ]]; then
+  echo ""
+  echo "${DIM}Dry run. Re-run with --apply to install.${NC}"
+  exit 0
+fi
+
+echo ""
+"$PLUGIN_DIR/$backend" install "${packages[@]}"
+
+# Record who owns it. Without this, remove and update have no idea which of
+# the backends put the thing there, and the whole model falls apart the first
+# time somebody uninstalls something.
+mkdir -p "$(dirname "$STATE_FILE")"
+[[ -f "$STATE_FILE" ]] || echo '{}' >"$STATE_FILE"
+tmp=$(mktemp)
+jq --arg n "$NAME" --arg b "$backend" --arg t "$trust" \
+  --argjson p "$(printf '%s\n' "${packages[@]}" | jq -R . | jq -s .)" \
+  --arg d "$(date -Is)" \
+  '.[$n] = {backend: $b, trust: $t, packages: $p, installed: $d}' \
+  "$STATE_FILE" >"$tmp" && mv "$tmp" "$STATE_FILE"
+
+echo ""
+echo "${GREEN}✓${NC} $NAME installed via $backend"
+echo "${DIM}  recorded in $STATE_FILE${NC}"

@@ -1,0 +1,18 @@
+#!/bin/bash
+# Last resort. Deliberately refuses to run unattended: this route has the
+# 'unverified' trust tier precisely because nobody reviewed what it builds,
+# so it should never be the thing that silently happens at 2am.
+set -euo pipefail
+case "${1:-}" in
+probe)
+  command -v make >/dev/null && command -v cc >/dev/null
+  ;;
+install)
+  shift
+  echo "Source build is not automated in this prototype." >&2
+  echo "Fetch, verify and build by hand:" >&2
+  for url in "$@"; do echo "  $url" >&2; done
+  exit 2
+  ;;
+*) echo "usage: source probe|install <url>..." >&2; exit 1 ;;
+esac

@@ -1,0 +1,57 @@
+{
+  "name": "mise",
+  "summary": "Polyglot dev tool version manager",
+  "homepage": "https://mise.jdx.dev/",
+  "routes": [
+    {
+      "backend": "opr",
+      "packages": ["mise-bin"],
+      "trust": "built-here",
+      "os": ["omarchy"],
+      "arch": ["x86_64", "aarch64"],
+      "version": "2026.9.1",
+      "freshness": "newest",
+      "origin": "curated",
+      "note": "Really in OPR as mise-bin. This route is the one we own."
+    },
+    {
+      "backend": "pacman",
+      "packages": ["mise"],
+      "trust": "distro",
+      "os": ["omarchy", "arch"],
+      "arch": ["x86_64"],
+      "version": "2026.9.1",
+      "freshness": "newest",
+      "origin": "repology:arch"
+    },
+    {
+      "backend": "apk",
+      "packages": ["mise"],
+      "trust": "distro",
+      "os": ["alpine"],
+      "arch": ["x86_64", "aarch64"],
+      "version": "2026.8.15",
+      "freshness": "outdated",
+      "origin": "repology:alpine_edge"
+    },
+    {
+      "backend": "brew",
+      "packages": ["mise"],
+      "trust": "upstream",
+      "os": ["macos", "linux"],
+      "arch": ["x86_64", "aarch64"],
+      "version": "2026.9.1",
+      "freshness": "newest",
+      "origin": "repology:homebrew"
+    },
+    {
+      "backend": "source",
+      "packages": ["https://github.com/jdx/mise"],
+      "trust": "unverified",
+      "os": ["any"],
+      "arch": ["any"],
+      "freshness": "unknown",
+      "origin": "curated"
+    }
+  ]
+}

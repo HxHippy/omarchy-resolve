@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+case "${1:-}" in
+probe)   command -v apt-get >/dev/null ;;
+install) shift; sudo apt-get update -qq; exec sudo apt-get install -y -- "$@" ;;
+*) echo "usage: apt probe|install <pkg>..." >&2; exit 1 ;;
+esac

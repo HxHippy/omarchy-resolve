@@ -1,0 +1,18 @@
+#!/bin/bash
+# The guaranteed tier: packages we built, signed and serve ourselves.
+# Probing requires the repo to actually be configured, otherwise pacman would
+# silently resolve the name from the official repos and the trust label would
+# be a lie.
+set -euo pipefail
+case "${1:-}" in
+probe)
+  command -v pacman >/dev/null || exit 1
+  grep -qE '^\[(omarchy|omarchy-test)\]' /etc/pacman.conf 2>/dev/null
+  ;;
+install)
+  shift
+  repo=$(grep -oE '^\[(omarchy|omarchy-test)\]' /etc/pacman.conf | head -1 | tr -d '[]')
+  exec sudo pacman -S --needed --noconfirm -- "${@/#/$repo/}"
+  ;;
+*) echo "usage: opr probe|install <pkg>..." >&2; exit 1 ;;
+esac
