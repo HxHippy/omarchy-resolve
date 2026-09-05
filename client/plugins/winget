@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 case "${1:-}" in
-probe)   command -v winget >/dev/null ;;
-install) shift; exec winget install --accept-package-agreements -e --id "$@" ;;
-*) echo "usage: winget probe|install <id>..." >&2; exit 1 ;;
+probe)     command -v winget >/dev/null ;;
+installed) shift; winget list --id "$1" >/dev/null 2>&1 ;;
+install)   shift; exec winget install --accept-package-agreements -e --id "$@" ;;
+remove)    shift; exec winget uninstall -e --id "$@" ;;
+*) echo "usage: winget probe|installed|install|remove" >&2; exit 1 ;;
 esac

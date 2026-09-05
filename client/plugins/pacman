@@ -2,7 +2,9 @@
 # Arch's native package manager. The default route on Omarchy.
 set -euo pipefail
 case "${1:-}" in
-probe)   command -v pacman >/dev/null ;;
-install) shift; exec sudo pacman -S --needed --noconfirm -- "$@" ;;
-*) echo "usage: pacman probe|install <pkg>..." >&2; exit 1 ;;
+probe)     command -v pacman >/dev/null ;;
+installed) shift; pacman -Qq -- "$1" >/dev/null 2>&1 ;;
+install)   shift; exec sudo pacman -S --needed --noconfirm -- "$@" ;;
+remove)    shift; exec sudo pacman -Rns --noconfirm -- "$@" ;;
+*) echo "usage: pacman probe|installed|install|remove" >&2; exit 1 ;;
 esac

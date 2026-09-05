@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 case "${1:-}" in
-probe)   command -v apk >/dev/null ;;
-install) shift; exec sudo apk add -- "$@" ;;
-*) echo "usage: apk probe|install <pkg>..." >&2; exit 1 ;;
+probe)     command -v apk >/dev/null ;;
+installed) shift; apk info -e "$1" >/dev/null 2>&1 ;;
+install)   shift; exec sudo apk add -- "$@" ;;
+remove)    shift; exec sudo apk del -- "$@" ;;
+*) echo "usage: apk probe|installed|install|remove" >&2; exit 1 ;;
 esac

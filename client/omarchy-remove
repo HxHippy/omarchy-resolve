@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# omarchy remove <thing>
+#
+# Looks up which backend installed it, asks that backend to remove it, and
+# forgets the record. The state file says who to ask; the backend decides what
+# actually happens, including any dependency reasoning, because it is the one
+# with a real package database.
+#
+# If somebody already removed it by hand, that is not an error. The record was
+# a hint and the hint is now wrong, so drop it and say so.
+
+set -euo pipefail
+
+# shellcheck source=lib.sh
+source "$(realpath "${BASH_SOURCE[0]%/*}")/lib.sh"
+
+APPLY=false
+NAME=""
+
+usage() {
+  cat <<'EOF'
+Usage: omarchy-remove [options] <name>
+
+Options:
+  --apply     Actually remove. Without this, prints the plan only.
+  -h, --help  Show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+  --apply) APPLY=true; shift ;;
+  -h | --help) usage; exit 0 ;;
+  -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  *) NAME="$1"; shift ;;
+  esac
+done
+
+[[ -z "$NAME" ]] && { usage; exit 1; }
+
+record=$(state_get "$NAME")
+
+if [[ -z "$record" ]]; then
+  echo "${RED}✗${NC} nothing recorded for '$NAME'" >&2
+  echo "${DIM}  omarchy-remove only manages what omarchy-install put there.${NC}" >&2
+  exit 1
+fi
+
+backend=$(jq -r '.backend' <<<"$record")
+trust=$(jq -r '.trust' <<<"$record")
+mapfile -t packages < <(jq -r '.packages[]' <<<"$record")
+plugin="$PLUGIN_DIR/$backend"
+
+echo "${BOLD}omarchy remove $NAME${NC}"
+echo "${DIM}installed via $backend ($trust): ${packages[*]}${NC}"
+echo ""
+
+if [[ ! -x "$plugin" ]]; then
+  echo "${RED}✗${NC} no plugin for backend '$backend' on this machine" >&2
+  echo "${DIM}  the record stays until a machine that has it can remove it.${NC}" >&2
+  exit 1
+fi
+
+set +e
+record_is_live "$record"
+live=$?
+set -e
+
+case $live in
+1)
+  echo "${YELLOW}⚠${NC} already gone. Something removed it outside omarchy."
+  if [[ "$APPLY" != true ]]; then
+    echo ""
+    echo "${DIM}Dry run. Re-run with --apply to drop the stale record.${NC}"
+    exit 0
+  fi
+  state_forget "$NAME"
+  echo "${GREEN}✓${NC} dropped the stale record for $NAME"
+  exit 0
+  ;;
+2)
+  echo "${RED}✗${NC} backend '$backend' is not usable here, so its state cannot be checked" >&2
+  exit 1
+  ;;
+esac
+
+echo "${BOLD}Plan:${NC} $backend → remove ${packages[*]}"
+
+if [[ "$APPLY" != true ]]; then
+  echo ""
+  echo "${DIM}Dry run. Re-run with --apply to remove.${NC}"
+  exit 0
+fi
+
+echo ""
+"$plugin" remove "${packages[@]}"
+state_forget "$NAME"
+
+echo ""
+echo "${GREEN}✓${NC} $NAME removed via $backend"

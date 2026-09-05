@@ -1,8 +1,11 @@
 #!/bin/bash
-# Cross-distro app delivery. Sandboxed, so it coexists with a native install.
+# Cross-distro app delivery. Owns its own store, so it coexists with a native
+# manager rather than fighting it for /usr.
 set -euo pipefail
 case "${1:-}" in
-probe)   command -v flatpak >/dev/null ;;
-install) shift; exec flatpak install -y flathub "$@" ;;
-*) echo "usage: flatpak probe|install <app-id>..." >&2; exit 1 ;;
+probe)     command -v flatpak >/dev/null ;;
+installed) shift; flatpak info "$1" >/dev/null 2>&1 ;;
+install)   shift; exec flatpak install -y flathub "$@" ;;
+remove)    shift; exec flatpak uninstall -y "$@" ;;
+*) echo "usage: flatpak probe|installed|install|remove" >&2; exit 1 ;;
 esac

@@ -19,11 +19,26 @@ server/
   routes/*.json         One file per package: every known way to get it.
 client/
   omarchy-install       Orchestrator. Runs the first route it has a plugin for.
-  plugins/<backend>     One file per backend. probe + install, nothing else.
+  omarchy-remove        Asks whichever backend installed it to take it away.
+  omarchy-list          What is installed, who owns it, is it still there.
+  lib.sh                Platform detection and the state file.
+  plugins/<backend>     One file per backend. Four verbs, nothing else.
+test/
+  run                   End-to-end suite against a stub backend.
 ```
 
-Adding a backend means adding one executable to `client/plugins/`. Nothing
-else in the system changes. That is the whole point of the shape.
+A plugin implements exactly four verbs:
+
+| Verb | Answers |
+|---|---|
+| `probe` | Can you run on this machine at all? |
+| `installed <pkg>` | Is this package present right now? |
+| `install <pkg>...` | Put it there. |
+| `remove <pkg>...` | Take it away. |
+
+Adding a backend means adding one executable to `client/plugins/`. Nothing else
+in the system changes. That is the whole point of the shape, and the files are
+about seven lines each.
 
 ## Try it
 
@@ -34,9 +49,12 @@ python3 server/resolve.py &          # listens on :8080
 ./client/omarchy-install --apply mise
 ./client/omarchy-install --variant cli wireshark
 ./client/omarchy-install --backend flatpak wireshark
+
+./client/omarchy-list                # what is installed and who owns it
+./client/omarchy-remove --apply mise
 ```
 
-Nothing installs without `--apply`.
+Nothing is installed or removed without `--apply`.
 
 ## What the two example packages demonstrate
 
@@ -147,11 +165,33 @@ control.
 Package names from the resolver are passed to plugins as arguments after `--`,
 so they cannot become flags. That is the extent of the current hardening.
 
+## Tests
+
+```bash
+./test/run
+```
+
+34 tests covering the full lifecycle: resolve, install, record, reconcile,
+remove, prune. They run against a stub backend that records what it was told
+instead of installing anything, so the suite needs no root and no real package
+manager. The interesting bugs here are in the orchestration, not in whether
+pacman works.
+
+The plugin verbs have also been exercised against real pacman on an Omarchy
+machine, install through detect through remove.
+
 ## Status
 
-Prototype. Working: resolution, platform and variant matching, trust ordering,
-plugin probe/dispatch, state recording, dry-run.
+Working and tested: resolution, platform and variant matching, trust ordering,
+plugin probe and dispatch, install, remove, list, reconciliation against the
+backend, stale-record pruning, dry-run on every mutating command.
 
-Not built yet: the receiver half (submitting a package and having it come out
-signed on the other side), `remove` and `update` reading back the state file,
-and any authentication on the resolver.
+Not built yet:
+
+- **The receiver half.** Submitting a package and having a signed artifact come
+  out the other side. The gate for that exists separately as an offline build
+  verifier, but it is not wired in here.
+- **`update`.** The state file has what it needs, the command is not written.
+- **Resolver authentication.** See the threat model above.
+- **Route data at scale.** Two packages are curated by hand. Ingesting Repology
+  dumps to seed thousands is a tool that does not exist yet.

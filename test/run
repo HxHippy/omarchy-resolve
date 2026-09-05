@@ -1,0 +1,176 @@
+#!/bin/bash
+
+# End-to-end tests for the client and resolver.
+#
+# Everything runs against a stub backend that records what it was told instead
+# of installing anything, so the whole lifecycle - resolve, install, record,
+# reconcile, remove - is exercised with no root and no real package manager.
+# That is deliberate: the interesting bugs in this thing are in the
+# orchestration, not in whether pacman works.
+
+set -uo pipefail
+
+ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
+FIXTURES="$ROOT/test/fixtures"
+PORT="${TEST_PORT:-8931}"
+
+GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; DIM=$'\033[2m'; NC=$'\033[0m'
+
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+export STUB_DB="$WORK/installed-packages"
+export OMARCHY_STATE="$WORK/state.json"
+export OMARCHY_PLUGIN_DIR="$FIXTURES/plugins"
+export OMARCHY_RESOLVER="http://127.0.0.1:$PORT"
+export OMARCHY_FORCE_OS=testos
+export OMARCHY_FORCE_ARCH=testarch
+
+SERVER_PID=""
+
+cleanup() {
+  [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+ok() { PASS=$((PASS + 1)); echo "${GREEN}✓${NC} $1"; }
+no() {
+  FAIL=$((FAIL + 1))
+  echo "${RED}✗${NC} $1"
+  [[ -n "${2:-}" ]] && echo "${DIM}    $2${NC}"
+}
+
+check() {
+  local label="$1" expected="$2" actual="$3"
+  if [[ "$actual" == *"$expected"* ]]; then
+    ok "$label"
+  else
+    no "$label" "wanted to see '$expected'"
+  fi
+}
+
+refute() {
+  local label="$1" unexpected="$2" actual="$3"
+  if [[ "$actual" != *"$unexpected"* ]]; then
+    ok "$label"
+  else
+    no "$label" "did not want to see '$unexpected'"
+  fi
+}
+
+strip() { sed 's/\x1b\[[0-9;]*m//g'; }
+
+# ---------------------------------------------------------------- resolver
+
+ROUTES_DIR="$FIXTURES/routes" PORT="$PORT" python3 "$ROOT/server/resolve.py" >"$WORK/server.log" 2>&1 &
+SERVER_PID=$!
+
+for _ in $(seq 1 40); do
+  curl -sf "$OMARCHY_RESOLVER/health" >/dev/null 2>&1 && break
+  sleep 0.1
+done
+
+if ! curl -sf "$OMARCHY_RESOLVER/health" >/dev/null 2>&1; then
+  echo "${RED}resolver never came up${NC}"; cat "$WORK/server.log"; exit 1
+fi
+ok "resolver starts and serves /health"
+
+out=$(curl -s "$OMARCHY_RESOLVER/resolve?name=testpkg&os=testos&arch=testarch")
+check "resolve returns routes for a known platform" '"backend": "stub"' "$out"
+refute "a route for another os is not offered" 'testpkg-other' "$out"
+refute "a variant route is hidden unless asked for" 'testpkg-cli' "$out"
+
+out=$(curl -s "$OMARCHY_RESOLVER/resolve?name=testpkg&os=testos&arch=testarch&variant=cli")
+check "asking for a variant returns it" 'testpkg-cli' "$out"
+
+out=$(curl -s -o /dev/null -w '%{http_code}' "$OMARCHY_RESOLVER/resolve?name=nope&os=testos&arch=testarch")
+check "unknown package is a 404" "404" "$out"
+
+out=$(curl -s "$OMARCHY_RESOLVER/resolve?name=testpkg&os=nosuchos&arch=testarch")
+check "known package with no route for the platform returns none" '"routes": []' "$out"
+
+# Trust ordering: built-here must outrank distro regardless of file order.
+first=$(curl -s "$OMARCHY_RESOLVER/resolve?name=testpkg&os=testos&arch=testarch" | jq -r '.routes[0].trust')
+check "routes are ordered by trust" "built-here" "$first"
+
+# ------------------------------------------------------------------ install
+
+out=$("$ROOT/client/omarchy-install" testpkg 2>&1 | strip)
+check "dry run picks the best available route" "Plan: stub → testpkg-real" "$out"
+check "dry run says it is a dry run" "Dry run" "$out"
+refute "dry run installs nothing" "testpkg-real" "$(cat "$STUB_DB" 2>/dev/null || true)"
+
+out=$("$ROOT/client/omarchy-install" testpkg 2>&1 | strip)
+check "a route with no plugin is shown as unavailable" "no plugin" "$out"
+
+out=$("$ROOT/client/omarchy-install" --apply testpkg 2>&1 | strip)
+check "apply reports success" "installed via stub" "$out"
+check "apply actually installed through the backend" "testpkg-real" "$(cat "$STUB_DB")"
+check "state records the backend" '"backend": "stub"' "$(cat "$OMARCHY_STATE")"
+check "state records the trust tier" '"trust": "built-here"' "$(cat "$OMARCHY_STATE")"
+refute "state does not record transitive dependencies" "depends" "$(cat "$OMARCHY_STATE")"
+
+jq -e . "$OMARCHY_STATE" >/dev/null 2>&1 && ok "state file is valid json" || no "state file is valid json"
+
+# --------------------------------------------------------------------- list
+
+out=$("$ROOT/client/omarchy-list" 2>&1 | strip)
+check "list shows the package" "testpkg" "$out"
+check "list confirms it against the backend" "installed" "$out"
+
+# ------------------------------------------------- reconcile with reality
+
+# Remove it behind the client's back, the way a user running the native
+# package manager directly would.
+: > "$STUB_DB"
+
+out=$("$ROOT/client/omarchy-list" 2>&1 | strip)
+check "a package removed out of band shows as stale" "stale" "$out"
+refute "and is not reported as installed" "  installed" "$out"
+
+out=$("$ROOT/client/omarchy-remove" --apply testpkg 2>&1 | strip)
+check "removing something already gone is not an error" "dropped the stale record" "$out"
+check "and the record is forgotten" "{}" "$(tr -d ' \n' < "$OMARCHY_STATE")"
+
+# ------------------------------------------------------------------- remove
+
+"$ROOT/client/omarchy-install" --apply testpkg >/dev/null 2>&1
+
+out=$("$ROOT/client/omarchy-remove" testpkg 2>&1 | strip)
+check "remove dry run shows the plan" "Plan: stub → remove testpkg-real" "$out"
+check "remove dry run removes nothing" "testpkg-real" "$(cat "$STUB_DB")"
+
+out=$("$ROOT/client/omarchy-remove" --apply testpkg 2>&1 | strip)
+check "remove reports success" "removed via stub" "$out"
+refute "remove actually removed it from the backend" "testpkg-real" "$(cat "$STUB_DB")"
+check "remove forgets the record" "{}" "$(tr -d ' \n' < "$OMARCHY_STATE")"
+
+out=$("$ROOT/client/omarchy-remove" testpkg 2>&1 | strip)
+check "removing something unknown fails cleanly" "nothing recorded" "$out"
+
+# --------------------------------------------- backend unavailable here
+
+"$ROOT/client/omarchy-install" --apply testpkg >/dev/null 2>&1
+out=$(STUB_UNAVAILABLE=1 "$ROOT/client/omarchy-list" 2>&1 | strip)
+check "an unusable backend reports unknown, not stale" "unknown" "$out"
+
+out=$(STUB_UNAVAILABLE=1 "$ROOT/client/omarchy-install" testpkg 2>&1 | strip)
+check "no usable route is an error, not a silent pass" "nothing on this machine" "$out"
+
+# ------------------------------------------------------------------ prune
+
+: > "$STUB_DB"
+out=$("$ROOT/client/omarchy-list" --prune 2>&1 | strip)
+check "prune drops stale records" "dropped stale record: testpkg" "$out"
+check "and the state file is empty afterwards" "{}" "$(tr -d ' \n' < "$OMARCHY_STATE")"
+
+# ----------------------------------------------------------------- summary
+
+echo ""
+if [[ $FAIL -gt 0 ]]; then
+  echo "${RED}$FAIL failed${NC}, $PASS passed"
+  exit 1
+fi
+echo "${GREEN}all $PASS tests passed${NC}"

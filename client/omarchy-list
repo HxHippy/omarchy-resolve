@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# omarchy list
+#
+# Everything omarchy-install put on this machine, and who owns it. Each record
+# is checked against its backend rather than reported from the file, so a
+# package removed by hand shows as stale instead of as installed.
+
+set -euo pipefail
+
+# shellcheck source=lib.sh
+source "$(realpath "${BASH_SOURCE[0]%/*}")/lib.sh"
+
+PRUNE=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+  --prune) PRUNE=true; shift ;;
+  -h | --help)
+    cat <<'EOF'
+Usage: omarchy-list [--prune]
+
+  --prune   Drop records whose packages are no longer installed
+EOF
+    exit 0
+    ;;
+  *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+names=$(state_names)
+
+if [[ -z "$names" ]]; then
+  echo "${DIM}nothing installed through omarchy${NC}"
+  exit 0
+fi
+
+printf '%-18s %-9s %-13s %s\n' "NAME" "BACKEND" "TRUST" "STATE"
+
+stale=()
+
+while IFS= read -r name; do
+  record=$(state_get "$name")
+  backend=$(jq -r '.backend' <<<"$record")
+  trust=$(jq -r '.trust' <<<"$record")
+
+  set +e
+  record_is_live "$record"
+  live=$?
+  set -e
+
+  case $live in
+  0) state="${GREEN}installed${NC}" ;;
+  1) state="${YELLOW}stale${NC} ${DIM}(removed outside omarchy)${NC}"; stale+=("$name") ;;
+  *) state="${DIM}unknown (backend unavailable here)${NC}" ;;
+  esac
+
+  printf '%-18s %-9s %-13s %b\n' "$name" "$backend" "$trust" "$state"
+done <<<"$names"
+
+if [[ ${#stale[@]} -gt 0 ]]; then
+  echo ""
+  if [[ "$PRUNE" == true ]]; then
+    for name in "${stale[@]}"; do
+      state_forget "$name"
+      echo "${GREEN}✓${NC} dropped stale record: $name"
+    done
+  else
+    echo "${DIM}${#stale[@]} stale record(s). Drop them with --prune.${NC}"
+  fi
+fi

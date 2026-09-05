@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 case "${1:-}" in
-probe)   command -v dnf >/dev/null ;;
-install) shift; exec sudo dnf install -y -- "$@" ;;
-*) echo "usage: dnf probe|install <pkg>..." >&2; exit 1 ;;
+probe)     command -v dnf >/dev/null ;;
+installed) shift; rpm -q "$1" >/dev/null 2>&1 ;;
+install)   shift; exec sudo dnf install -y -- "$@" ;;
+remove)    shift; exec sudo dnf remove -y -- "$@" ;;
+*) echo "usage: dnf probe|installed|install|remove" >&2; exit 1 ;;
 esac

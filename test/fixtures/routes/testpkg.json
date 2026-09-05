@@ -1,0 +1,43 @@
+{
+  "name": "testpkg",
+  "summary": "Fixture package for the test suite",
+  "routes": [
+    {
+      "backend": "stub",
+      "packages": ["testpkg-real"],
+      "trust": "built-here",
+      "os": ["testos"],
+      "arch": ["testarch"],
+      "freshness": "newest",
+      "origin": "curated"
+    },
+    {
+      "backend": "nosuchbackend",
+      "packages": ["testpkg-alt"],
+      "trust": "distro",
+      "os": ["testos"],
+      "arch": ["testarch"],
+      "freshness": "newest",
+      "origin": "curated"
+    },
+    {
+      "backend": "stub",
+      "packages": ["testpkg-cli"],
+      "trust": "distro",
+      "os": ["testos"],
+      "arch": ["testarch"],
+      "variant": "cli",
+      "freshness": "newest",
+      "origin": "curated"
+    },
+    {
+      "backend": "stub",
+      "packages": ["testpkg-other"],
+      "trust": "distro",
+      "os": ["otheros"],
+      "arch": ["testarch"],
+      "freshness": "newest",
+      "origin": "curated"
+    }
+  ]
+}

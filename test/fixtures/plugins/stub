@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+DB="${STUB_DB:?STUB_DB must be set}"
+touch "$DB"
+case "${1:-}" in
+probe)     [[ "${STUB_UNAVAILABLE:-}" != "1" ]] ;;
+installed) shift; grep -qxF "$1" "$DB" ;;
+install)   shift; for p in "$@"; do grep -qxF "$p" "$DB" || echo "$p" >>"$DB"; done ;;
+remove)    shift; for p in "$@"; do grep -vxF "$p" "$DB" > "$DB.t" || true; mv "$DB.t" "$DB"; done ;;
+*) exit 1 ;;
+esac

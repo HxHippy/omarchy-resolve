@@ -1,7 +1,10 @@
 #!/bin/bash
+# Owns its own prefix, so it does not contend with a native manager.
 set -euo pipefail
 case "${1:-}" in
-probe)   command -v brew >/dev/null ;;
-install) shift; exec brew install "$@" ;;
-*) echo "usage: brew probe|install <pkg>..." >&2; exit 1 ;;
+probe)     command -v brew >/dev/null ;;
+installed) shift; brew list --versions "$1" >/dev/null 2>&1 ;;
+install)   shift; exec brew install "$@" ;;
+remove)    shift; exec brew uninstall "$@" ;;
+*) echo "usage: brew probe|installed|install|remove" >&2; exit 1 ;;
 esac
