@@ -49,17 +49,22 @@ done
 OS=$(detect_os)
 ARCH=$(detect_arch)
 
-url="$RESOLVER/resolve?name=$(printf %s "$NAME" | jq -sRr @uri)&os=$OS&arch=$ARCH"
-[[ -n "$VARIANT" ]] && url+="&variant=$VARIANT"
+query="/resolve?name=$(printf %s "$NAME" | jq -sRr @uri)&os=$OS&arch=$ARCH"
+[[ -n "$VARIANT" ]] && query+="&variant=$(printf %s "$VARIANT" | jq -sRr @uri)"
 
 echo "${BOLD}omarchy install $NAME${NC}"
 echo "${DIM}machine: $OS/$ARCH   resolver: $RESOLVER${NC}"
 echo ""
 
-response=$(curl -fsS "$url" 2>/dev/null) || {
-  echo "${RED}✗${NC} resolver unreachable at $RESOLVER" >&2
-  exit 1
-}
+set +e
+response=$(resolver_get "$query")
+fetch_status=$?
+set -e
+
+case $fetch_status in
+2) echo "${RED}✗${NC} resolver unreachable at $RESOLVER" >&2; exit 1 ;;
+3) exit 1 ;;
+esac
 
 if [[ "$(jq -r '.found' <<<"$response")" != "true" ]]; then
   echo "${RED}✗${NC} no routes known for '$NAME'" >&2
@@ -79,15 +84,20 @@ chosen_index=""
 
 for i in $(seq 0 $((count - 1))); do
   route=$(jq -c ".routes[$i]" <<<"$response")
+
+  # A route that fails validation is dropped entirely rather than shown and
+  # skipped, so nothing malformed can be selected by a later --backend.
+  if ! validate_route "$route"; then
+    continue
+  fi
+
   backend=$(jq -r '.backend' <<<"$route")
   trust=$(jq -r '.trust' <<<"$route")
   packages=$(jq -r '.packages | join(" ")' <<<"$route")
-  plugin="$PLUGIN_DIR/$backend"
-
   status="${DIM}no plugin${NC}"
   usable=false
 
-  if [[ -x "$plugin" ]]; then
+  if plugin=$(plugin_path "$backend"); then
     if "$plugin" probe >/dev/null 2>&1; then
       usable=true
       status="${GREEN}available${NC}"
@@ -147,7 +157,11 @@ if [[ "$APPLY" != true ]]; then
 fi
 
 echo ""
-"$PLUGIN_DIR/$backend" install "${packages[@]}"
+plugin=$(plugin_path "$backend") || {
+  echo "${RED}✗${NC} refusing to run backend '$backend'" >&2
+  exit 1
+}
+"$plugin" install "${packages[@]}"
 
 # Record who owns it. Without this, remove has no idea which backend put the
 # thing there, and the model falls apart the first time somebody uninstalls

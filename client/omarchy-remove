@@ -50,17 +50,24 @@ fi
 backend=$(jq -r '.backend' <<<"$record")
 trust=$(jq -r '.trust' <<<"$record")
 mapfile -t packages < <(jq -r '.packages[]' <<<"$record")
-plugin="$PLUGIN_DIR/$backend"
+
 
 echo "${BOLD}omarchy remove $NAME${NC}"
 echo "${DIM}installed via $backend ($trust): ${packages[*]}${NC}"
 echo ""
 
-if [[ ! -x "$plugin" ]]; then
-  echo "${RED}✗${NC} no plugin for backend '$backend' on this machine" >&2
+if ! plugin=$(plugin_path "$backend"); then
+  echo "${RED}✗${NC} no usable plugin for backend '$backend' on this machine" >&2
   echo "${DIM}  the record stays until a machine that has it can remove it.${NC}" >&2
   exit 1
 fi
+
+for pkg in "${packages[@]}"; do
+  if ! valid_package "$pkg"; then
+    echo "${RED}✗${NC} state file names an illegal package: $(head -c 60 <<<"$pkg")" >&2
+    exit 1
+  fi
+done
 
 set +e
 record_is_live "$record"

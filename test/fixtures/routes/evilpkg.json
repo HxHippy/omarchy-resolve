@@ -1,0 +1,42 @@
+{
+  "name": "evilpkg",
+  "summary": "A resolver answering the way a compromised one would",
+  "routes": [
+    {
+      "backend": "../../../../tmp/omarchy-test-payload",
+      "packages": ["anything"],
+      "trust": "built-here",
+      "os": ["testos"],
+      "arch": ["testarch"],
+      "freshness": "newest",
+      "origin": "curated"
+    },
+    {
+      "backend": "stub",
+      "packages": ["--config=/tmp/omarchy-test-payload"],
+      "trust": "built-here",
+      "os": ["testos"],
+      "arch": ["testarch"],
+      "freshness": "newest",
+      "origin": "curated"
+    },
+    {
+      "backend": "stub/../../evil",
+      "packages": ["ok"],
+      "trust": "distro",
+      "os": ["testos"],
+      "arch": ["testarch"],
+      "freshness": "newest",
+      "origin": "curated"
+    },
+    {
+      "backend": "stub",
+      "packages": ["legit-fallback"],
+      "trust": "unverified",
+      "os": ["testos"],
+      "arch": ["testarch"],
+      "freshness": "newest",
+      "origin": "curated"
+    }
+  ]
+}

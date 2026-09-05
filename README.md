@@ -150,20 +150,49 @@ removes something out of band with `dnf remove`, the entry goes stale and is
 dropped the next time it is consulted. **The backend is always the source of
 truth. State only remembers who to ask.**
 
-## Threat model
+## Security
 
-The resolver is a trusted component. It tells the client which packages to
-install, and the client hands those to a privileged package manager. A
-compromised or spoofed resolver can therefore name any package on the system.
+The resolver decides what a privileged package manager installs, which makes it
+a supply-chain component. [SECURITY.md](SECURITY.md) has the full model. The
+short version:
 
-The prototype does nothing about this. It speaks plain HTTP, has no
-authentication, and the client pins nothing. A real deployment needs signed
-route responses and a pinned resolver identity, in the same way a package
-repository needs a signing key. Do not expose this one to a network you do not
-control.
+**Answers are signed and clients pin the key.** Every response carries an
+ed25519 signature over the body. A client with no pinned key refuses to act; a
+client with the wrong key refuses to act. This holds over plain HTTP and
+through a terminating proxy, because the signature covers the payload rather
+than the transport.
 
-Package names from the resolver are passed to plugins as arguments after `--`,
-so they cannot become flags. That is the extent of the current hardening.
+**The resolver is not trusted, only authenticated.** Backend names become paths
+that get executed, so they are validated against a strict identifier pattern
+and the resolved path is confirmed to be inside the plugin directory. Package
+names cannot begin with a dash or contain control characters. A route that
+fails validation is dropped rather than shown, and the same checks apply to the
+state file, because it is a local file that could have been tampered with.
+
+**It fails closed.** A resolver configured to sign that cannot sign returns 500
+rather than an unsigned answer, since an unsigned response looks exactly like
+an attacker stripping the header.
+
+The suite includes a fixture that answers the way a compromised resolver would,
+with a traversing backend name and an option-injecting package name, and
+asserts that nothing executes.
+
+What this does not defend against, in short: a compromised resolver operator, a
+malicious upstream package, or a lying `trust` label. The real integrity
+guarantee still comes from the backend, which verifies package signatures
+against its own keyring no matter what the resolver claimed.
+
+### Running it with signing
+
+```bash
+tools/keygen ./resolver-key
+SIGNING_KEY=./resolver-key python3 server/resolve.py
+
+install -Dm644 resolver-key.pub ~/.config/omarchy/resolver.pub
+```
+
+The resolver binds `127.0.0.1` unless `LISTEN_ADDR` says otherwise. Exposing a
+service that names packages for other machines should be a deliberate act.
 
 ## Tests
 
@@ -171,8 +200,9 @@ so they cannot become flags. That is the extent of the current hardening.
 ./test/run
 ```
 
-34 tests covering the full lifecycle: resolve, install, record, reconcile,
-remove, prune. They run against a stub backend that records what it was told
+47 tests covering the full lifecycle plus the security properties: resolve,
+install, record, reconcile, remove, prune, signature verification, and a
+hostile-resolver fixture. They run against a stub backend that records what it was told
 instead of installing anything, so the suite needs no root and no real package
 manager. The interesting bugs here are in the orchestration, not in whether
 pacman works.
@@ -192,6 +222,8 @@ Not built yet:
   out the other side. The gate for that exists separately as an offline build
   verifier, but it is not wired in here.
 - **`update`.** The state file has what it needs, the command is not written.
-- **Resolver authentication.** See the threat model above.
+- **Key rotation.** Pinning is single-key with no overlap period.
+- **Replay protection.** A signed answer stays valid forever; responses need a
+  timestamp and clients a freshness window.
 - **Route data at scale.** Two packages are curated by hand. Ingesting Repology
   dumps to seed thousands is a tool that does not exist yet.

@@ -29,9 +29,20 @@ export OMARCHY_FORCE_ARCH=testarch
 
 SERVER_PID=""
 
+# The suite runs against a signing resolver and a pinned key, so the normal
+# path under test is the secure one rather than an --insecure shortcut.
+"$ROOT/tools/keygen" "$WORK/key" >/dev/null 2>&1
+export OMARCHY_RESOLVER_PUBKEY="$WORK/key.pub"
+
+# What a hostile resolver would try to get the client to execute.
+PAYLOAD=/tmp/omarchy-test-payload
+printf '#!/bin/bash\ntouch /tmp/omarchy-test-payload-RAN\n' > "$PAYLOAD"
+chmod +x "$PAYLOAD" 2>/dev/null
+rm -f /tmp/omarchy-test-payload-RAN
+
 cleanup() {
   [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null
-  rm -rf "$WORK"
+  rm -rf "$WORK" /tmp/omarchy-test-payload /tmp/omarchy-test-payload-RAN
 }
 trap cleanup EXIT
 
@@ -63,8 +74,12 @@ refute() {
 strip() { sed 's/\x1b\[[0-9;]*m//g'; }
 
 # ---------------------------------------------------------------- resolver
+#
+# These assertions talk to the resolver directly with curl to test resolution
+# logic. Signature handling is covered separately below, through the client.
 
-ROUTES_DIR="$FIXTURES/routes" PORT="$PORT" python3 "$ROOT/server/resolve.py" >"$WORK/server.log" 2>&1 &
+ROUTES_DIR="$FIXTURES/routes" PORT="$PORT" SIGNING_KEY="$WORK/key" \
+  python3 "$ROOT/server/resolve.py" >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 40); do
@@ -165,6 +180,56 @@ check "no usable route is an error, not a silent pass" "nothing on this machine"
 out=$("$ROOT/client/omarchy-list" --prune 2>&1 | strip)
 check "prune drops stale records" "dropped stale record: testpkg" "$out"
 check "and the state file is empty afterwards" "{}" "$(tr -d ' \n' < "$OMARCHY_STATE")"
+
+# ---------------------------------------------------------------- security
+
+out=$("$ROOT/client/omarchy-install" evilpkg 2>&1 | strip)
+check "a traversing backend name is rejected" "illegal backend name" "$out"
+# The rejection message names what it rejected, which is useful, so assert on
+# the chosen plan rather than on the whole transcript.
+plan_line=$(grep '^Plan:' <<<"$out" || true)
+refute "and is never the chosen plan" "omarchy-test-payload" "$plan_line"
+refute "nor is a traversing path ever selected" ".." "$plan_line"
+check "an option-injecting package name is rejected" "illegal package name" "$out"
+check "a legitimate later route still resolves" "Plan: stub → legit-fallback" "$out"
+
+"$ROOT/client/omarchy-install" --apply evilpkg >/dev/null 2>&1
+if [[ -e /tmp/omarchy-test-payload-RAN ]]; then
+  no "hostile route did not execute anything" "payload ran"
+else
+  ok "hostile route did not execute anything"
+fi
+check "only the safe package was installed" "legit-fallback" "$(cat "$STUB_DB")"
+refute "and the payload path was never installed" "omarchy-test-payload" "$(cat "$STUB_DB")"
+"$ROOT/client/omarchy-remove" --apply evilpkg >/dev/null 2>&1
+
+# Signature handling.
+out=$(OMARCHY_RESOLVER_PUBKEY="$WORK/nonexistent.pub" \
+  "$ROOT/client/omarchy-install" testpkg 2>&1 | strip)
+check "a client with no pinned key refuses to act" "no pinned resolver key" "$out"
+
+"$ROOT/tools/keygen" "$WORK/wrong" >/dev/null 2>&1
+out=$(OMARCHY_RESOLVER_PUBKEY="$WORK/wrong.pub" \
+  "$ROOT/client/omarchy-install" testpkg 2>&1 | strip)
+check "a signature from the wrong key is refused" "does not verify" "$out"
+refute "and nothing is planned from it" "Plan:" "$out"
+
+out=$(OMARCHY_INSECURE=1 OMARCHY_RESOLVER_PUBKEY="$WORK/wrong.pub" \
+  "$ROOT/client/omarchy-install" testpkg 2>&1 | strip)
+check "OMARCHY_INSECURE=1 is the documented opt-out" "Plan: stub" "$out"
+
+# An unsigned resolver, which is what an attacker stripping the header looks like.
+ROUTES_DIR="$FIXTURES/routes" PORT="$((PORT + 1))" python3 "$ROOT/server/resolve.py" \
+  >"$WORK/unsigned.log" 2>&1 &
+UNSIGNED_PID=$!
+for _ in $(seq 1 40); do
+  curl -sf "http://127.0.0.1:$((PORT + 1))/health" >/dev/null 2>&1 && break
+  sleep 0.1
+done
+out=$(OMARCHY_RESOLVER="http://127.0.0.1:$((PORT + 1))" \
+  "$ROOT/client/omarchy-install" testpkg 2>&1 | strip)
+check "an unsigned answer is refused" "without a signature" "$out"
+kill "$UNSIGNED_PID" 2>/dev/null
 
 # ----------------------------------------------------------------- summary
 
